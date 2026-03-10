@@ -1,0 +1,386 @@
+{
+  "name": "80/20 Blog Post Agent",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "4d7e542e-02c1-4fc1-b15d-b4c8329033c7",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        2688,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.nrn.com/rss.xml",
+        "options": {}
+      },
+      "id": "5e04dbbc-8c6a-4a60-b786-ac706a42b981",
+      "name": "RSS - Nation's Restaurant News",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        2928,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://modernrestaurantmanagement.com/feed/",
+        "options": {}
+      },
+      "id": "3f2a3e9b-c5ec-482a-a453-2debb66cfab6",
+      "name": "RSS - Modern Restaurant Management",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        2928,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.fsrmagazine.com/feed",
+        "options": {}
+      },
+      "id": "aa77d428-cdc1-4f36-87b4-68ed4469e40c",
+      "name": "RSS - FSR Magazine",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        2928,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.qsrmagazine.com/rss.xml",
+        "options": {}
+      },
+      "id": "563d8fc5-bcd5-4a26-bc39-8be7ad6f8a4d",
+      "name": "RSS - QSR Magazine",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        2928,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter and score RSS items for relevance to restaurant/burger industry\n// Returns top 5 most relevant recent articles\n\nvar items = $input.all();\nvar now = Date.now();\nvar TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;\n\nvar HIGH_VALUE_KEYWORDS = [\n  'burger', 'burgers', 'hamburger', 'smash burger', 'craft burger',\n  'restaurant trends', 'menu innovation', 'customer experience',\n  'food trends', 'dining trends', 'fast casual', 'quick service',\n  'restaurant marketing', 'loyalty program', 'local restaurant',\n  'beef', 'protein', 'gourmet', 'artisan', 'handcrafted'\n];\n\nvar MEDIUM_VALUE_KEYWORDS = [\n  'restaurant', 'dining', 'food service', 'hospitality', 'menu',\n  'customer', 'revenue', 'profit', 'sales', 'growth',\n  'social media', 'delivery', 'takeout', 'online ordering',\n  'staff', 'labor', 'operations', 'supply chain', 'ingredient',\n  'sustainability', 'local', 'community', 'brand'\n];\n\nfunction scoreItem(item) {\n  var text = [\n    (item.json.title || ''),\n    (item.json.description || ''),\n    (item.json.summary || ''),\n    (item.json.content || '')\n  ].join(' ').toLowerCase();\n\n  var score = 0;\n  var k;\n\n  for (k = 0; k < HIGH_VALUE_KEYWORDS.length; k++) {\n    if (text.indexOf(HIGH_VALUE_KEYWORDS[k].toLowerCase()) !== -1) score += 3;\n  }\n  for (k = 0; k < MEDIUM_VALUE_KEYWORDS.length; k++) {\n    if (text.indexOf(MEDIUM_VALUE_KEYWORDS[k].toLowerCase()) !== -1) score += 1;\n  }\n\n  return score;\n}\n\nfunction parseDate(dateStr) {\n  if (!dateStr) return 0;\n  var d = new Date(dateStr);\n  return isNaN(d.getTime()) ? 0 : d.getTime();\n}\n\nvar scored = items.map(function(item) {\n  var pubDate = parseDate(item.json.pubDate || item.json.isoDate || item.json.date);\n  var age = now - pubDate;\n  var isRecent = pubDate > 0 ? age <= TWO_WEEKS_MS : true;\n  return {\n    json: item.json,\n    _score: scoreItem(item),\n    _pubDate: pubDate,\n    _isRecent: isRecent\n  };\n}).filter(function(item) {\n  return item._isRecent && item._score > 0;\n}).sort(function(a, b) {\n  return b._score - a._score || b._pubDate - a._pubDate;\n});\n\nvar seen = {};\nvar deduped = [];\nvar i;\nfor (i = 0; i < scored.length; i++) {\n  var key = (scored[i].json.title || '').toLowerCase().trim();\n  if (!seen[key]) {\n    seen[key] = true;\n    deduped.push(scored[i]);\n  }\n}\n\nvar top5 = deduped.slice(0, 5);\n\nif (top5.length === 0) {\n  var fallback = items.sort(function(a, b) {\n    var da = parseDate(a.json.pubDate || a.json.isoDate);\n    var db = parseDate(b.json.pubDate || b.json.isoDate);\n    return db - da;\n  }).slice(0, 5);\n  return fallback.map(function(item) {\n    return {\n      json: {\n        title: item.json.title || 'Untitled',\n        link: item.json.link || item.json.url || '',\n        description: item.json.description || item.json.summary || item.json.content || '',\n        source: item.json.source || 'Industry News',\n        pubDate: item.json.pubDate || item.json.isoDate || '',\n        score: 0\n      }\n    };\n  });\n}\n\nreturn top5.map(function(item) {\n  var desc = (item.json.description || item.json.summary || item.json.content || '');\n  desc = desc.replace(/<[^>]*>/g, '').substring(0, 500);\n  return {\n    json: {\n      title: item.json.title || 'Untitled',\n      link: item.json.link || item.json.url || '',\n      description: desc,\n      source: item.json.source || 'Industry News',\n      pubDate: item.json.pubDate || item.json.isoDate || '',\n      score: item._score\n    }\n  };\n});\n"
+      },
+      "id": "d208580e-66e2-4fa1-8045-f0254ff16a40",
+      "name": "Filter & Score Top Articles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3456,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all top articles into a single item for the AI prompt\nvar items = $input.all();\n\nvar articleSummaries = items.map(function(item, i) {\n  var lines = [\n    'Article ' + (i + 1) + ':',\n    'Title: ' + item.json.title,\n    'Source: ' + item.json.source,\n    'Published: ' + item.json.pubDate,\n    'Summary: ' + item.json.description,\n    'URL: ' + item.json.link\n  ];\n  return lines.join('\\n');\n}).join('\\n\\n---\\n\\n');\n\nvar sourceLinks = items.map(function(item) {\n  return '- ' + item.json.title + ' (' + item.json.link + ')';\n}).join('\\n');\n\nvar today = new Date().toISOString().split('T')[0];\n\nvar promptContent = 'Today is ' + today + '. Based on the following trending articles from the restaurant and hospitality industry, write TWO separate, fully publish-ready blog posts for the 80/20 Burgers website. Each post should cover a different angle from the articles.' +\n  '\\n\\nTRENDING INDUSTRY ARTICLES:\\n\\n' + articleSummaries +\n  '\\n\\n---\\n\\nWRITE TWO COMPLETE BLOG POSTS. Separate them with:\\n\\n===== BLOG POST 2 =====\\n\\nEach blog post must:' +\n  '\\n1. Have a compelling, SEO-friendly title (include relevant keywords naturally)' +\n  '\\n2. Open with a strong hook that connects the industry trend to why it matters to burger lovers and 80/20 Burgers specifically' +\n  '\\n3. Have 4-5 fully developed sections with ## headers, each section being 150-200 words of real substance — not summaries, actual storytelling and perspective' +\n  '\\n4. Weave in specific callouts to 80/20 Burgers approach, menu philosophy, ingredients, or customer experience throughout' +\n  '\\n5. Include at least one concrete, specific detail or anecdote per section that makes it feel real and local (not generic)' +\n  '\\n6. Close with a strong call-to-action (visit us, try a burger, follow us on social, etc.)' +\n  '\\n7. Be 850-1000 words — fully fleshed out and ready to post with only a light review needed' +\n  '\\n8. Use markdown formatting throughout' +\n  '\\n9. End with a Sources and Inspiration section listing the original articles' +\n  '\\n\\nThe two posts must take different angles — one customer-facing and lifestyle-oriented, the other industry-perspective and thought leadership.' +\n  '\\n\\nSOURCE ARTICLES TO CITE:\\n' + sourceLinks +\n  '\\n\\nWrite both complete blog posts now:';\n\nreturn [{\n  json: {\n    articleSummaries: articleSummaries,\n    today: today,\n    articleCount: items.length,\n    sourceLinks: sourceLinks,\n    promptContent: promptContent\n  }\n}];\n\n"
+      },
+      "id": "9256ed3c-54e8-48d7-a17d-f9f4bf3f5fda",
+      "name": "Prepare AI Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3712,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4096, system: 'You are the voice of 80/20 Burgers - a restaurant passionate about crafting the perfect burger using quality ingredients. Your writing style is: casual and approachable (like talking to a friend), confident and knowledgeable about food, enthusiastic about burgers and the dining experience, community-focused and locally grounded, and occasionally playful with burger-related wordplay. You write SEO-friendly blog posts that feel genuine, not corporate.', messages: [{ role: 'user', content: $json.promptContent }] }) }}",
+        "options": {}
+      },
+      "id": "6cfd35f0-6e90-42fb-b087-82915455f6d4",
+      "name": "Generate Blog Post (Claude AI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3968,
+        560
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "tTh8yUFnhXwOJnEe",
+          "name": "x-api-key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract the blog post text from Claude's API response\nvar response = $input.first().json;\nvar blogPost = '';\n\nif (response.content && response.content.length > 0) {\n  blogPost = response.content[0].text || '';\n} else if (response.error) {\n  throw new Error('Anthropic API error: ' + JSON.stringify(response.error));\n} else {\n  throw new Error('Unexpected response from Anthropic API: ' + JSON.stringify(response));\n}\n\nvar today = new Date().toISOString().split('T')[0];\nvar fileName = '80-20-Blog-' + today + '.md';\n\nreturn [{\n  json: {\n    blogPost: blogPost,\n    fileName: fileName,\n    today: today,\n    wordCount: blogPost.split(/\\s+/).length\n  }\n}];\n"
+      },
+      "id": "2a348905-4876-47b5-a368-e8f09c4a9038",
+      "name": "Extract Blog Post Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4240,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Convert blog post text to binary data for Google Drive upload\nvar blogData = $input.first().json;\nvar content = blogData.blogPost;\nvar fileName = blogData.fileName;\n\nvar buffer = Buffer.from(content, 'utf8');\nvar binaryData = await helpers.prepareBinaryData(buffer, fileName, 'text/markdown');\n\nreturn [{\n  json: {\n    fileName: fileName,\n    wordCount: blogData.wordCount,\n    today: blogData.today\n  },\n  binary: {\n    data: binaryData\n  }\n}];\n"
+      },
+      "id": "f0709d4c-1c73-41e2-bd84-b4593816c960",
+      "name": "Convert to Binary File",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4496,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Final summary node - outputs confirmation\nvar blogData = $('Extract Blog Post Text').first().json;\n\nreturn [{\n  json: {\n    status: 'success',\n    message: '80/20 Burgers weekly blog post generated and saved to Google Drive.',\n    fileName: blogData.fileName,\n    wordCount: blogData.wordCount,\n    generatedAt: new Date().toISOString()\n  }\n}];\n"
+      },
+      "id": "40edb7ba-8b9f-45a7-880c-121307dcce83",
+      "name": "Done - Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4960,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "numberInputs": 4
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        3216,
+        528
+      ],
+      "id": "6bb11237-eda4-4559-b1d0-6147ec03ecc8",
+      "name": "Merge",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "name": "Blog Post ",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1c40YMb6Q7r_f00Z3hjqHSznosDbMipty",
+          "mode": "list",
+          "cachedResultName": "80/20 Blog Posts Folder",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1c40YMb6Q7r_f00Z3hjqHSznosDbMipty"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        4752,
+        560
+      ],
+      "id": "f4703175-7a81-4322-ba8f-02215e11658c",
+      "name": "Upload file",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "j1He6Eh8DxwBcWZz",
+          "name": "Google Drive account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "RSS - Nation's Restaurant News",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "RSS - Modern Restaurant Management",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "RSS - FSR Magazine",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "RSS - QSR Magazine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RSS - Nation's Restaurant News": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RSS - Modern Restaurant Management": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Filter & Score Top Articles": {
+      "main": [
+        [
+          {
+            "node": "Prepare AI Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Prompt": {
+      "main": [
+        [
+          {
+            "node": "Generate Blog Post (Claude AI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Blog Post (Claude AI)": {
+      "main": [
+        [
+          {
+            "node": "Extract Blog Post Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Blog Post Text": {
+      "main": [
+        [
+          {
+            "node": "Convert to Binary File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to Binary File": {
+      "main": [
+        [
+          {
+            "node": "Upload file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Filter & Score Top Articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RSS - FSR Magazine": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "RSS - QSR Magazine": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Upload file": {
+      "main": [
+        [
+          {
+            "node": "Done - Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "26a6c455-89d5-4006-88d7-c6116c75a168",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "0a26e4b060e74f155cff671272c1231c17777020976a2949ca3c2eb1e1477f07"
+  },
+  "id": "EEdGcwJRimktfJeD",
+  "tags": []
+}
